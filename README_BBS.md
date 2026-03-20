@@ -4,6 +4,11 @@ MeshMonitor-BBS is a lightweight **Meshtastic DM bulletin board system** script 
 
 It runs as a command handler (`bbs.py`) and stores state in JSON files under `/data/bbs`.
 
+## Trigger Setup
+
+<img width="1664" height="259" alt="image" src="https://github.com/user-attachments/assets/febeb663-f811-4810-9d9a-fbba11298e63" />
+
+
 ## What it does
 
 - Creates named message boards.
