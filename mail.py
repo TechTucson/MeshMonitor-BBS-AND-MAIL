@@ -6,6 +6,7 @@
 import json
 import os
 import pathlib
+import sys
 
 DATA = "/data/bbs"
 pathlib.Path(DATA).mkdir(parents=True, exist_ok=True)
@@ -16,6 +17,22 @@ PENDING_DB = f"{DATA}/pending.json"
 MAX_LEN = 180  # Keep payload under LoRa-friendly size target
 MORE_PROMPT = "\n\n(Type: mail more)"
 OVERRIDE_PASSWORD = "meshadmin"  # Static admin override password
+
+
+def normalize_node_id(node_id):
+    value = (node_id or "").strip()
+    if not value:
+        return value
+    return value if value.startswith("!") else f"!{value}"
+
+
+def get_sender_node_id():
+    argv = sys.argv[1:]
+    if "--nid" in argv:
+        idx = argv.index("--nid")
+        if idx + 1 < len(argv):
+            return normalize_node_id(argv[idx + 1])
+    return normalize_node_id(os.getenv("FROM_NODE", "unknown"))
 
 
 def load(path):
@@ -85,15 +102,16 @@ def dm_chunked(sender, text):
 def help_text():
     return (
         header("Help")
-        + "mail send <to_device_id> <message>\n"
+        + "mail send <!to_node_id> <subject> | <message>\n"
         + "mail check\n"
+        + "mail read <mail_id>\n"
         + "mail delete <mail_id>\n"
         + "mail purge <admin_pw>\n"
         + "mail more"
     )
 
 
-sender = os.getenv("FROM_NODE", "unknown")
+sender = get_sender_node_id()
 message = os.getenv("MESSAGE", "").strip()
 parts = message.split()
 
@@ -142,25 +160,49 @@ elif action == "more":
     send_private(next_page)
 
 elif action == "send":
-    if len(parts) < 4:
-        dm_chunked(sender, header("Send") + "Usage:\nmail send <to_device_id> <message>")
+    if len(parts) < 5:
+        dm_chunked(
+            sender,
+            header("Send") + "Usage:\nmail send <!to_node_id> <subject> | <message>",
+        )
 
-    recipient = parts[2]
-    text = " ".join(parts[3:])
+    payload = " ".join(parts[2:])
+    recipient_raw, sep, remainder = payload.partition(" ")
+    if not sep:
+        dm_chunked(
+            sender,
+            header("Send") + "Usage:\nmail send <!to_node_id> <subject> | <message>",
+        )
+
+    recipient = normalize_node_id(recipient_raw)
+    subject, subject_sep, text = remainder.partition("|")
+    subject = subject.strip()
+    text = text.strip()
+
+    if not subject_sep:
+        dm_chunked(
+            sender,
+            header("Send") + "Use `|` between subject and message.\n"
+            + "Usage:\nmail send <!to_node_id> <subject> | <message>",
+        )
 
     if not recipient.strip():
-        dm_chunked(sender, header("Send") + "Recipient device id is required.")
+        dm_chunked(sender, header("Send") + "Recipient node id is required.")
 
     if recipient == sender:
         dm_chunked(sender, header("Send") + "Cannot send mail to your own device id.")
 
-    if not text.strip():
+    if not subject:
+        dm_chunked(sender, header("Send") + "Subject cannot be empty.")
+
+    if not text:
         dm_chunked(sender, header("Send") + "Message cannot be empty.")
 
     mail_id = str(max([int(k) for k in mail.keys()], default=0) + 1)
     mail[mail_id] = {
         "from": sender,
         "to": recipient,
+        "subject": subject,
         "text": text,
     }
     save(MAIL_DB, mail)
@@ -174,13 +216,35 @@ elif action == "check":
         dm_chunked(sender, header("Inbox") + "No mail for your device id.")
 
     lines = [
-        f"#{mid} from {item.get('from', '?')}: {item.get('text', '')}"
+        f"#{mid} from {item.get('from', '?')}: {item.get('subject', '(no subject)')}"
         for mid, item in sorted(inbox, key=lambda x: int(x[0]))
     ]
 
     dm_chunked(
         sender,
-        header("Inbox") + "\n".join(lines) + "\n\nDelete one:\nmail delete <mail_id>",
+        header("Inbox")
+        + "\n".join(lines)
+        + "\n\nRead one:\nmail read <mail_id>\nDelete one:\nmail delete <mail_id>",
+    )
+
+elif action in ("read", "open", "view"):
+    if len(parts) < 3:
+        dm_chunked(sender, header("Read") + "Usage:\nmail read <mail_id>")
+
+    mail_id = parts[2]
+    if mail_id not in mail:
+        dm_chunked(sender, header("Read") + "Mail not found.")
+
+    if mail[mail_id].get("to") != sender:
+        dm_chunked(sender, header("Read") + "Only the intended receiver can read this mail.")
+
+    item = mail[mail_id]
+    dm_chunked(
+        sender,
+        header(f"Mail #{mail_id}")
+        + f"From: {item.get('from', '?')}\n"
+        + f"Subject: {item.get('subject', '(no subject)')}\n\n"
+        + item.get("text", ""),
     )
 
 elif action in ("delete", "del"):
