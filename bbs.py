@@ -3,8 +3,8 @@
 #   name: Mesh DM BBS V.5
 #   emoji: 📡
 
-import os
 import json
+import os
 import pathlib
 
 DATA = "/data/bbs"
@@ -14,7 +14,9 @@ BOARDS_DB = f"{DATA}/boards.json"
 POSTS_DB = f"{DATA}/posts.json"
 PENDING_DB = f"{DATA}/pending.json"
 
-MAX_LEN = 180  # Safe LoRa payload length
+MAX_LEN = 180  # Keep payload under the LoRa message size target
+MORE_PROMPT = "\n\n(Type: bbs more)"
+OVERRIDE_PASSWORD = "meshadmin"  # Static admin override password
 
 
 # -----------------------------
@@ -35,41 +37,70 @@ def header(title):
     return f"📡 MESH BBS — {title}\n"
 
 
+def send_private(text):
+    print(json.dumps({"response": text, "private": True}))
+    exit()
+
+
+def is_override_password(pw):
+    return bool(OVERRIDE_PASSWORD) and pw == OVERRIDE_PASSWORD
+
+
+def split_subject_and_body(raw_text):
+    """Parse post text as: subject | message. Fallback keeps compatibility."""
+    if "|" in raw_text:
+        subject, body = raw_text.split("|", 1)
+        subject = subject.strip() or "(no subject)"
+        body = body.strip() or "(empty)"
+        return subject, body
+    return "(no subject)", raw_text.strip()
+
+
 # -----------------------------
 # Paging Functions
 # -----------------------------
 
-def dm_chunked(sender, text):
-    """Send first chunk and store remaining pages per user"""
-
-    # Split text into lines and make chunks <= MAX_LEN
-    lines = text.split("\n")
+def chunk_text(text, limit):
+    """Split text into chunks <= limit, handling long unbroken strings."""
     chunks = []
     current = ""
 
-    for line in lines:
-        if len(current) + len(line) + 1 > MAX_LEN:
+    for part in text.split("\n"):
+        piece = part if not current else f"\n{part}"
+
+        if len(piece) <= limit and len(current) + len(piece) <= limit:
+            current += piece
+            continue
+
+        if current:
             chunks.append(current)
-            current = line
-        else:
-            current += "\n" + line if current else line
+            current = ""
+
+        while len(part) > limit:
+            chunks.append(part[:limit])
+            part = part[limit:]
+
+        current = part
 
     if current:
         chunks.append(current)
 
-    # Store remaining pages
+    return chunks or [""]
+
+
+def dm_chunked(sender, text):
+    """Send first chunk and store remaining pages per user."""
+    first_limit = MAX_LEN - len(MORE_PROMPT)
+    chunks = chunk_text(text, first_limit)
+
     pending[sender] = chunks[1:]
     save(PENDING_DB, pending)
 
-    # Send first page + prompt if more exist
     first = chunks[0]
     if pending[sender]:
-        first += "\n\n(Type: bbs more)"
-    print(json.dumps({
-        "response": first,
-        "private": True
-    }))
-    exit()
+        first += MORE_PROMPT
+
+    send_private(first)
 
 
 # -----------------------------
@@ -78,18 +109,15 @@ def dm_chunked(sender, text):
 
 def help_text():
     return (
-        header("Help") +
-        "Commands:\n\n"
-        "bbs boards\n"
-        "List boards\n\n"
-        "bbs create <name>\n"
-        "Create new board\n\n"
-        "bbs post <board> <msg>\n"
-        "Add post\n\n"
-        "bbs read <board>\n"
-        "See posts\n\n"
-        " bbs more\n"
-        "Continue msg"
+        header("Help")
+        + "boards | create <b> [pw]\n"
+        + "post <b> <msg>\n"
+        + "post <b> <pw> <msg>\n"
+        + "post uses: subject | body\n"
+        + "read <b> [pw] [post_id]\n"
+        + "del <id> [admin_pw]\n"
+        + "delboard <b> [admin_pw]\n"
+        + "more"
     )
 
 
@@ -102,6 +130,7 @@ message = os.getenv("MESSAGE", "").strip()
 
 parts = message.split()
 if not parts:
+    pending = load(PENDING_DB)
     dm_chunked(sender, header("Error") + "Empty command.\nType: bbs help")
 
 cmd = parts[0].lower()
@@ -110,35 +139,46 @@ boards = load(BOARDS_DB)
 posts = load(POSTS_DB)
 pending = load(PENDING_DB)
 
+# Clear stale pagination state unless user asked for more.
+if not (cmd == "bbs" and len(parts) > 1 and parts[1].lower() == "more"):
+    if sender in pending and pending[sender]:
+        pending[sender] = []
+        save(PENDING_DB, pending)
+
+
 # =====================================================
 # BBS SYSTEM
 # =====================================================
 
 if cmd == "bbs":
-
     # ---------------- MORE (pagination) ----------------
     if len(parts) > 1 and parts[1].lower() == "more":
         if sender not in pending or not pending[sender]:
             dm_chunked(sender, header("Info") + "No more messages.")
-        # pop next page
+
+        next_limit = MAX_LEN - len(MORE_PROMPT)
         next_page = pending[sender].pop(0)
         save(PENDING_DB, pending)
-        # append prompt if still more
+
+        if len(next_page) > next_limit:
+            rest = chunk_text(next_page, next_limit)
+            next_page = rest[0]
+            pending[sender] = rest[1:] + pending[sender]
+            save(PENDING_DB, pending)
+
         if pending[sender]:
-            next_page += "\n\n(Type: bbs more)"
-        print(json.dumps({
-            "response": next_page,
-            "private": True
-        }))
-        exit()
+            next_page += MORE_PROMPT
+
+        send_private(next_page)
 
     # ---------------- ROOT HELP ----------------
     if len(parts) == 1:
-        dm_chunked(sender,
-            header("Welcome") +
-            "Type: bbs help\n"
-            "to see commands.\n"
-	    "Please be patient. This is slow."
+        dm_chunked(
+            sender,
+            header("Welcome")
+            + "Type: bbs help\n"
+            + "to see commands.\n"
+            + "Please be patient. This is slow.",
         )
 
     action = parts[1].lower()
@@ -150,91 +190,208 @@ if cmd == "bbs":
     # ---------------- LIST BOARDS ----------------
     elif action == "boards":
         if not boards:
-            dm_chunked(sender,
-                header("Boards") +
-                "No boards yet.\n"
-                "Create one with:\n"
-                "bbs create general"
+            dm_chunked(
+                sender,
+                header("Boards") + "No boards yet.\nCreate one with:\nbbs create general",
             )
-        board_list = "\n".join(f"• {b}" for b in boards.keys())
-        dm_chunked(sender,
-            header("Boards") +
-            board_list +
-            "\n\nRead with:\n"
-            "bbs read <board>"
+
+        board_list = "\n".join(
+            f"• {name}{' 🔒' if meta.get('password') else ''}" for name, meta in boards.items()
+        )
+        dm_chunked(
+            sender,
+            header("Boards") + board_list + "\n\nRead with:\nbbs read <board> [pw]",
         )
 
     # ---------------- CREATE BOARD ----------------
     elif action == "create":
         if len(parts) < 3:
-            dm_chunked(sender,
-                header("Create Board") +
-                "Usage:\n"
-                "bbs create <name>"
-            )
+            dm_chunked(sender, header("Create Board") + "Usage:\nbbs create <name> [password]")
+
         name = parts[2].lower()
+        password = parts[3] if len(parts) > 3 else ""
+
         if name in boards:
             dm_chunked(sender, header("Create Board") + "Board already exists.")
-        boards[name] = {"owner": sender}
+
+        boards[name] = {"owner": sender, "password": password}
         save(BOARDS_DB, boards)
-        dm_chunked(sender,
-            header("Success") +
-            f"Board '{name}' created.\n\n"
-            f"Post using:\n"
-            f"bbs post {name} hello mesh"
+
+        protection = "protected" if password else "public"
+        dm_chunked(
+            sender,
+            header("Success")
+            + f"Board '{name}' created ({protection}).\n\n"
+            + "Post using:\n"
+            + (f"bbs post {name} <pw> hello mesh" if password else f"bbs post {name} hello mesh"),
         )
 
     # ---------------- POST ----------------
     elif action == "post":
         if len(parts) < 4:
-            dm_chunked(sender,
-                header("Post Message") +
-                "Usage:\n"
-                "bbs post <board> <message>"
-            )
+            dm_chunked(sender, header("Post Message") + "Usage:\nbbs post <board> <message>")
+
         board = parts[2].lower()
-        text = " ".join(parts[3:])
         if board not in boards:
             dm_chunked(sender, header("Error") + "Board not found.\nTry: bbs boards")
-        pid = str(len(posts) + 1)
-        posts[pid] = {
-            "board": board,
-            "author": sender,
-            "text": text
-        }
+
+        board_pw = boards[board].get("password", "")
+        if board_pw:
+            if len(parts) < 5:
+                dm_chunked(
+                    sender,
+                    header("Post Message") + f"Board '{board}' is protected.\nUsage:\nbbs post {board} <pw> <message>",
+                )
+            supplied_pw = parts[3]
+            if supplied_pw != board_pw:
+                dm_chunked(sender, header("Error") + "Wrong board password.")
+            text = " ".join(parts[4:])
+        else:
+            text = " ".join(parts[3:])
+        subject, body = split_subject_and_body(text)
+
+        pid = str(max([int(k) for k in posts.keys()], default=0) + 1)
+        posts[pid] = {"board": board, "author": sender, "subject": subject, "text": body}
         save(POSTS_DB, posts)
-        dm_chunked(sender,
-            header("Post Added") +
-            f"Saved as #{pid} in '{board}'.\n\n"
-            f"Read posts:\n"
-            f"bbs read {board}"
+        dm_chunked(
+            sender,
+            header("Post Added") + f"Saved #{pid} in '{board}'.\nSubj: {subject}\n\nRead:\nbbs read {board}",
         )
 
     # ---------------- READ BOARD ----------------
     elif action == "read":
         if len(parts) < 3:
-            dm_chunked(sender,
-                header("Read Board") +
-                "Usage:\n"
-                "bbs read <board>"
-            )
+            dm_chunked(sender, header("Read Board") + "Usage:\nbbs read <board> [pw] [post_id]")
+
         board = parts[2].lower()
         if board not in boards:
             dm_chunked(sender, header("Error") + "Board not found.")
+
+        board_pw = boards[board].get("password", "")
+        post_id = None
+
+        if board_pw:
+            supplied_pw = parts[3] if len(parts) > 3 else ""
+            if supplied_pw != board_pw:
+                dm_chunked(
+                    sender,
+                    header("Read Board") + f"Board '{board}' is protected.\nUse: bbs read {board} <pw> [post_id]",
+                )
+            if len(parts) > 4:
+                post_id = parts[4]
+        elif len(parts) > 3:
+            post_id = parts[3]
+
         msgs = [
-            f'#{pid} {p["author"]}: {p["text"]}'
+            (pid, p)
             for pid, p in posts.items()
             if p["board"] == board
         ]
         if not msgs:
-            dm_chunked(sender,
-                header(board.upper()) +
-                "No posts yet.\n"
-                f"Be first:\n"
-                f"bbs post {board} hello mesh"
+            dm_chunked(
+                sender,
+                header(board.upper()) + f"No posts yet.\nBe first:\nbbs post {board} hello mesh",
             )
-        output = header(f"Board: {board}") + "\n".join(msgs[-10:])
-        dm_chunked(sender, output)
+
+        if post_id:
+            selected = next((p for pid, p in msgs if pid == post_id), None)
+            if not selected:
+                dm_chunked(sender, header("Read Board") + f"Post #{post_id} not found in '{board}'.")
+            subj = selected.get("subject", "(no subject)")
+            dm_chunked(
+                sender,
+                header(f"{board} #{post_id}") + f"Subj: {subj}\n{selected['author']}: {selected['text']}",
+            )
+
+        if len(msgs) > 1:
+            listing = "\n".join(
+                f"#{pid} {p['author']} [{p.get('subject', '(no subject)')}]"
+                for pid, p in msgs[-10:]
+            )
+            usage = f"bbs read {board} "
+            usage += "<pw> <id>" if board_pw else "<id>"
+            dm_chunked(
+                sender,
+                header(f"Board: {board}") + "Multiple posts:\n" + listing + f"\n\nPick one:\n{usage}",
+            )
+
+        pid, post = msgs[0]
+        subj = post.get("subject", "(no subject)")
+        dm_chunked(sender, header(f"{board} #{pid}") + f"Subj: {subj}\n{post['author']}: {post['text']}")
+
+    # ---------------- READ SINGLE POST BY ID ----------------
+    elif action == "postid":
+        if len(parts) < 3:
+            dm_chunked(sender, header("Post") + "Usage:\nbbs postid <post_id>")
+        pid = parts[2]
+        if pid not in posts:
+            dm_chunked(sender, header("Post") + "Post not found.")
+        post = posts[pid]
+        board = post.get("board", "")
+        board_pw = boards.get(board, {}).get("password", "")
+        if board_pw:
+            dm_chunked(
+                sender,
+                header("Post") + f"Board '{board}' is protected.\nUse: bbs read {board} <pw> {pid}",
+            )
+        subj = post.get("subject", "(no subject)")
+        dm_chunked(sender, header(f"{board} #{pid}") + f"Subj: {subj}\n{post['author']}: {post['text']}")
+
+    # ---------------- DELETE OWN POST ----------------
+    elif action in ("del", "delete"):
+        if len(parts) < 3:
+            dm_chunked(sender, header("Delete") + "Usage:\nbbs del <post_id> [override_pw]")
+
+        pid = parts[2]
+        if pid not in posts:
+            dm_chunked(sender, header("Delete") + "Post not found.")
+
+        override_pw = parts[3] if len(parts) > 3 else ""
+        is_author = posts[pid].get("author") == sender
+        has_override = is_override_password(override_pw)
+        if not is_author and not has_override:
+            dm_chunked(sender, header("Delete") + "You can only delete your own posts.")
+
+        board = posts[pid].get("board", "?")
+        del posts[pid]
+        save(POSTS_DB, posts)
+        mode = "override" if has_override and not is_author else "owner"
+        dm_chunked(sender, header("Deleted") + f"Removed post #{pid} from '{board}' ({mode}).")
+
+    # ---------------- DELETE BOARD ----------------
+    elif action in ("delboard", "deleteboard"):
+        if len(parts) < 3:
+            dm_chunked(sender, header("Delete Board") + "Usage:\nbbs delboard <board> [override_pw]")
+
+        board = parts[2].lower()
+        if board not in boards:
+            dm_chunked(sender, header("Delete Board") + "Board not found.")
+
+        override_pw = parts[3] if len(parts) > 3 else ""
+        has_override = is_override_password(override_pw)
+        board_posts = [pid for pid, post in posts.items() if post.get("board") == board]
+        is_owner = boards[board].get("owner") == sender
+
+        if has_override:
+            for pid in board_posts:
+                del posts[pid]
+            del boards[board]
+            save(POSTS_DB, posts)
+            save(BOARDS_DB, boards)
+            dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted by override.")
+
+        if not is_owner:
+            dm_chunked(sender, header("Delete Board") + "Only board owner can delete this board.")
+
+        if board_posts:
+            dm_chunked(
+                sender,
+                header("Delete Board") + f"Board '{board}' is not empty.\nUse override password to force delete.",
+            )
+
+        del boards[board]
+        save(BOARDS_DB, boards)
+        dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted.")
 
 # =====================================================
 
