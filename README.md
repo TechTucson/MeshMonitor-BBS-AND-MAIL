@@ -12,6 +12,8 @@ It runs as a command handler (`bbs.py`) and stores state in JSON files under `/d
 - Enforces short responses suitable for LoRa payload limits (target: 180 chars per response chunk).
 - Allows board-level passwords (optional).
 - Lets users delete their own posts.
+- Allows board owners to delete empty boards.
+- Supports optional override password for admin deletes.
 
 ## Data files
 
@@ -20,6 +22,10 @@ The script uses these files under `/data/bbs`:
 - `boards.json` — board definitions (owner + optional password)
 - `posts.json` — all posts
 - `pending.json` — per-user pagination state for `bbs more`
+
+Optional environment variable:
+
+- `BBS_OVERRIDE_PASSWORD` — enables override deletes for posts/boards.
 
 ## Command reference
 
@@ -62,6 +68,15 @@ All commands are sent as a DM message starting with `bbs`.
 - `bbs del <post_id>`
 - `bbs delete <post_id>`  
   Delete your own post only.
+
+- `bbs del <post_id> <override_password>`  
+  Delete any post when override password is configured and valid.
+
+- `bbs delboard <board>`  
+  Delete a board only if you are the owner and it is empty.
+
+- `bbs delboard <board> <override_password>`  
+  Force delete a board (and its posts) with override password.
 
 ### Pagination
 

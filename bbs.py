@@ -16,6 +16,7 @@ PENDING_DB = f"{DATA}/pending.json"
 
 MAX_LEN = 180  # Keep payload under the LoRa message size target
 MORE_PROMPT = "\n\n(Type: bbs more)"
+OVERRIDE_PASSWORD = "s3cret"
 
 
 # -----------------------------
@@ -39,6 +40,10 @@ def header(title):
 def send_private(text):
     print(json.dumps({"response": text, "private": True}))
     exit()
+
+
+def is_override_password(pw):
+    return bool(OVERRIDE_PASSWORD) and pw == OVERRIDE_PASSWORD
 
 
 # -----------------------------
@@ -108,6 +113,10 @@ def help_text():
         + "Read posts\n\n"
         + "bbs del <post_id>\n"
         + "Delete your post\n\n"
+        + "bbs del <post_id> <override_pw>\n"
+        + "Override delete any post\n\n"
+        + "bbs delboard <board> [override_pw]\n"
+        + "Delete board (owner+empty or override)\n\n"
         + "bbs more\n"
         + "Continue msg"
     )
@@ -283,19 +292,58 @@ if cmd == "bbs":
     # ---------------- DELETE OWN POST ----------------
     elif action in ("del", "delete"):
         if len(parts) < 3:
-            dm_chunked(sender, header("Delete") + "Usage:\nbbs del <post_id>")
+            dm_chunked(sender, header("Delete") + "Usage:\nbbs del <post_id> [override_pw]")
 
         pid = parts[2]
         if pid not in posts:
             dm_chunked(sender, header("Delete") + "Post not found.")
 
-        if posts[pid].get("author") != sender:
+        override_pw = parts[3] if len(parts) > 3 else ""
+        is_author = posts[pid].get("author") == sender
+        has_override = is_override_password(override_pw)
+        if not is_author and not has_override:
             dm_chunked(sender, header("Delete") + "You can only delete your own posts.")
 
         board = posts[pid].get("board", "?")
         del posts[pid]
         save(POSTS_DB, posts)
-        dm_chunked(sender, header("Deleted") + f"Removed post #{pid} from '{board}'.")
+        mode = "override" if has_override and not is_author else "owner"
+        dm_chunked(sender, header("Deleted") + f"Removed post #{pid} from '{board}' ({mode}).")
+
+    # ---------------- DELETE BOARD ----------------
+    elif action in ("delboard", "deleteboard"):
+        if len(parts) < 3:
+            dm_chunked(sender, header("Delete Board") + "Usage:\nbbs delboard <board> [override_pw]")
+
+        board = parts[2].lower()
+        if board not in boards:
+            dm_chunked(sender, header("Delete Board") + "Board not found.")
+
+        override_pw = parts[3] if len(parts) > 3 else ""
+        has_override = is_override_password(override_pw)
+        board_posts = [pid for pid, post in posts.items() if post.get("board") == board]
+        is_owner = boards[board].get("owner") == sender
+
+        if has_override:
+            for pid in board_posts:
+                del posts[pid]
+            del boards[board]
+            save(POSTS_DB, posts)
+            save(BOARDS_DB, boards)
+            dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted by override.")
+
+        if not is_owner:
+            dm_chunked(sender, header("Delete Board") + "Only board owner can delete this board.")
+
+        if board_posts:
+            dm_chunked(
+                sender,
+                header("Delete Board") + f"Board '{board}' is not empty.\nUse override password to force delete.",
+            )
+
+        del boards[board]
+        save(BOARDS_DB, boards)
+        dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted.")
 
 # =====================================================
 
