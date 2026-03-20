@@ -4,6 +4,13 @@ This branch now contains a **mail-only Meshtastic DM bot**.
 
 All public board/BBS features were removed from `bbs.py`. The bot now supports private mail by device identifier only.
 
+## Attributes/Flags
+- We'll need to send a flag labeled --nid {NODE_ID)
+- Also Need a Trigger See Below
+
+  - <img width="1664" height="259" alt="image" src="https://github.com/user-attachments/assets/b3cee745-867a-4faf-8493-1d3b76cf4e20" />
+
+
 ## Security model
 
 - `mail check` only shows mail where `to == --nid`.
