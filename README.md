@@ -13,7 +13,7 @@ It runs as a command handler (`bbs.py`) and stores state in JSON files under `/d
 - Allows board-level passwords (optional).
 - Lets users delete their own posts.
 - Allows board owners to delete empty boards.
-- Supports optional override password for admin deletes.
+- Supports static override password for admin deletes.
 
 ## Data files
 
@@ -23,9 +23,9 @@ The script uses these files under `/data/bbs`:
 - `posts.json` — all posts
 - `pending.json` — per-user pagination state for `bbs more`
 
-Optional environment variable:
+Static admin override password:
 
-- `BBS_OVERRIDE_PASSWORD` — enables override deletes for posts/boards.
+- `meshadmin` (configured in `bbs.py` as `OVERRIDE_PASSWORD`)
 
 ## Command reference
 
@@ -58,10 +58,16 @@ All commands are sent as a DM message starting with `bbs`.
 ### Reading
 
 - `bbs read <board>`  
-  Read a public board.
+  If one post exists, it is shown. If multiple posts exist, you'll get IDs to choose from.
 
 - `bbs read <board> <password>`  
-  Read a protected board.
+  Same behavior for protected boards (list/select when multiple posts).
+
+- `bbs read <board> <post_id>`  
+  Read one post on a public board.
+
+- `bbs read <board> <password> <post_id>`  
+  Read one post on a protected board.
 
 ### Deleting
 
