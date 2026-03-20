@@ -16,7 +16,7 @@ PENDING_DB = f"{DATA}/pending.json"
 
 MAX_LEN = 180  # Keep payload under the LoRa message size target
 MORE_PROMPT = "\n\n(Type: bbs more)"
-OVERRIDE_PASSWORD = os.getenv("BBS_OVERRIDE_PASSWORD", "").strip()
+OVERRIDE_PASSWORD = "s3cret"
 
 
 # -----------------------------
