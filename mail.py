@@ -18,6 +18,13 @@ MORE_PROMPT = "\n\n(Type: mail more)"
 OVERRIDE_PASSWORD = "meshadmin"  # Static admin override password
 
 
+def normalize_node_id(node_id):
+    value = (node_id or "").strip()
+    if not value:
+        return value
+    return value if value.startswith("!") else f"!{value}"
+
+
 def load(path):
     if not os.path.exists(path):
         return {}
@@ -85,7 +92,7 @@ def dm_chunked(sender, text):
 def help_text():
     return (
         header("Help")
-        + "mail send <to_device_id> <message>\n"
+        + "mail send <!to_node_id> <message>\n"
         + "mail check\n"
         + "mail delete <mail_id>\n"
         + "mail purge <admin_pw>\n"
@@ -93,7 +100,7 @@ def help_text():
     )
 
 
-sender = os.getenv("FROM_NODE", "unknown")
+sender = normalize_node_id(os.getenv("FROM_NODE", "unknown"))
 message = os.getenv("MESSAGE", "").strip()
 parts = message.split()
 
@@ -143,13 +150,13 @@ elif action == "more":
 
 elif action == "send":
     if len(parts) < 4:
-        dm_chunked(sender, header("Send") + "Usage:\nmail send <to_device_id> <message>")
+        dm_chunked(sender, header("Send") + "Usage:\nmail send <!to_node_id> <message>")
 
-    recipient = parts[2]
+    recipient = normalize_node_id(parts[2])
     text = " ".join(parts[3:])
 
     if not recipient.strip():
-        dm_chunked(sender, header("Send") + "Recipient device id is required.")
+        dm_chunked(sender, header("Send") + "Recipient node id is required.")
 
     if recipient == sender:
         dm_chunked(sender, header("Send") + "Cannot send mail to your own device id.")
