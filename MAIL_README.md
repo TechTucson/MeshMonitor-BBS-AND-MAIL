@@ -15,11 +15,14 @@ All public board/BBS features were removed from `bbs.py`. The bot now supports p
 
 All commands are sent in DM and start with `mail`.
 
-- `mail send <!to_node_id> <message>`  
-  Send private mail to a specific node id (must start with `!`).
+- `mail send <!to_node_id> <subject> | <message>`  
+  Send private mail to a specific node id (must start with `!`) with a subject.
 
 - `mail check`  
-  Show only messages addressed to your device id.
+  Show a list of messages addressed to your node id. Use `mail read` to open one.
+
+- `mail read <mail_id>`  
+  Read a specific message addressed to your node id.
 
 - `mail delete <mail_id>`  
   Delete a message only if your device id is the intended receiver.
