@@ -6,7 +6,7 @@ All public board/BBS features were removed from `bbs.py`. The bot now supports p
 
 ## Security model
 
-- `mail check` only shows mail where `to == FROM_NODE`.
+- `mail check` only shows mail where `to == --nid`.
 - `mail delete` only allows deletion by the intended receiver.
 - `mail purge` requires the configured admin override password.
 - Responses are always DM/private replies.

@@ -6,6 +6,7 @@
 import json
 import os
 import pathlib
+import sys
 
 DATA = "/data/bbs"
 pathlib.Path(DATA).mkdir(parents=True, exist_ok=True)
@@ -23,6 +24,15 @@ def normalize_node_id(node_id):
     if not value:
         return value
     return value if value.startswith("!") else f"!{value}"
+
+
+def get_sender_node_id():
+    argv = sys.argv[1:]
+    if "--nid" in argv:
+        idx = argv.index("--nid")
+        if idx + 1 < len(argv):
+            return normalize_node_id(argv[idx + 1])
+    return normalize_node_id(os.getenv("FROM_NODE", "unknown"))
 
 
 def load(path):
@@ -100,7 +110,7 @@ def help_text():
     )
 
 
-sender = normalize_node_id(os.getenv("FROM_NODE", "unknown"))
+sender = get_sender_node_id()
 message = os.getenv("MESSAGE", "").strip()
 parts = message.split()
 
