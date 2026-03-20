@@ -46,6 +46,16 @@ def is_override_password(pw):
     return bool(OVERRIDE_PASSWORD) and pw == OVERRIDE_PASSWORD
 
 
+def split_subject_and_body(raw_text):
+    """Parse post text as: subject | message. Fallback keeps compatibility."""
+    if "|" in raw_text:
+        subject, body = raw_text.split("|", 1)
+        subject = subject.strip() or "(no subject)"
+        body = body.strip() or "(empty)"
+        return subject, body
+    return "(no subject)", raw_text.strip()
+
+
 # -----------------------------
 # Paging Functions
 # -----------------------------
@@ -103,6 +113,7 @@ def help_text():
         + "boards | create <b> [pw]\n"
         + "post <b> <msg>\n"
         + "post <b> <pw> <msg>\n"
+        + "post uses: subject | body\n"
         + "read <b> [pw] [post_id]\n"
         + "del <id> [admin_pw]\n"
         + "delboard <b> [admin_pw]\n"
@@ -237,13 +248,14 @@ if cmd == "bbs":
             text = " ".join(parts[4:])
         else:
             text = " ".join(parts[3:])
+        subject, body = split_subject_and_body(text)
 
         pid = str(max([int(k) for k in posts.keys()], default=0) + 1)
-        posts[pid] = {"board": board, "author": sender, "text": text}
+        posts[pid] = {"board": board, "author": sender, "subject": subject, "text": body}
         save(POSTS_DB, posts)
         dm_chunked(
             sender,
-            header("Post Added") + f"Saved as #{pid} in '{board}'.\n\nRead posts:\nbbs read {board}",
+            header("Post Added") + f"Saved #{pid} in '{board}'.\nSubj: {subject}\n\nRead:\nbbs read {board}",
         )
 
     # ---------------- READ BOARD ----------------
@@ -285,10 +297,17 @@ if cmd == "bbs":
             selected = next((p for pid, p in msgs if pid == post_id), None)
             if not selected:
                 dm_chunked(sender, header("Read Board") + f"Post #{post_id} not found in '{board}'.")
-            dm_chunked(sender, header(f"{board} #{post_id}") + f'{selected["author"]}: {selected["text"]}')
+            subj = selected.get("subject", "(no subject)")
+            dm_chunked(
+                sender,
+                header(f"{board} #{post_id}") + f"Subj: {subj}\n{selected['author']}: {selected['text']}",
+            )
 
         if len(msgs) > 1:
-            listing = "\n".join(f"#{pid} {p['author']}" for pid, p in msgs[-10:])
+            listing = "\n".join(
+                f"#{pid} {p['author']} [{p.get('subject', '(no subject)')}]"
+                for pid, p in msgs[-10:]
+            )
             usage = f"bbs read {board} "
             usage += "<pw> <id>" if board_pw else "<id>"
             dm_chunked(
@@ -297,7 +316,8 @@ if cmd == "bbs":
             )
 
         pid, post = msgs[0]
-        dm_chunked(sender, header(f"{board} #{pid}") + f'{post["author"]}: {post["text"]}')
+        subj = post.get("subject", "(no subject)")
+        dm_chunked(sender, header(f"{board} #{pid}") + f"Subj: {subj}\n{post['author']}: {post['text']}")
 
     # ---------------- READ SINGLE POST BY ID ----------------
     elif action == "postid":
@@ -314,63 +334,8 @@ if cmd == "bbs":
                 sender,
                 header("Post") + f"Board '{board}' is protected.\nUse: bbs read {board} <pw> {pid}",
             )
-        dm_chunked(sender, header(f"{board} #{pid}") + f'{post["author"]}: {post["text"]}')
-
-    # ---------------- DELETE OWN POST ----------------
-    elif action in ("del", "delete"):
-        if len(parts) < 3:
-            dm_chunked(sender, header("Delete") + "Usage:\nbbs del <post_id> [override_pw]")
-
-        pid = parts[2]
-        if pid not in posts:
-            dm_chunked(sender, header("Delete") + "Post not found.")
-
-        override_pw = parts[3] if len(parts) > 3 else ""
-        is_author = posts[pid].get("author") == sender
-        has_override = is_override_password(override_pw)
-        if not is_author and not has_override:
-            dm_chunked(sender, header("Delete") + "You can only delete your own posts.")
-
-        board = posts[pid].get("board", "?")
-        del posts[pid]
-        save(POSTS_DB, posts)
-        mode = "override" if has_override and not is_author else "owner"
-        dm_chunked(sender, header("Deleted") + f"Removed post #{pid} from '{board}' ({mode}).")
-
-    # ---------------- DELETE BOARD ----------------
-    elif action in ("delboard", "deleteboard"):
-        if len(parts) < 3:
-            dm_chunked(sender, header("Delete Board") + "Usage:\nbbs delboard <board> [override_pw]")
-
-        board = parts[2].lower()
-        if board not in boards:
-            dm_chunked(sender, header("Delete Board") + "Board not found.")
-
-        override_pw = parts[3] if len(parts) > 3 else ""
-        has_override = is_override_password(override_pw)
-        board_posts = [pid for pid, post in posts.items() if post.get("board") == board]
-        is_owner = boards[board].get("owner") == sender
-
-        if has_override:
-            for pid in board_posts:
-                del posts[pid]
-            del boards[board]
-            save(POSTS_DB, posts)
-            save(BOARDS_DB, boards)
-            dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted by override.")
-
-        if not is_owner:
-            dm_chunked(sender, header("Delete Board") + "Only board owner can delete this board.")
-
-        if board_posts:
-            dm_chunked(
-                sender,
-                header("Delete Board") + f"Board '{board}' is not empty.\nUse override password to force delete.",
-            )
-
-        del boards[board]
-        save(BOARDS_DB, boards)
-        dm_chunked(sender, header("Delete Board") + f"Board '{board}' deleted.")
+        subj = post.get("subject", "(no subject)")
+        dm_chunked(sender, header(f"{board} #{pid}") + f"Subj: {subj}\n{post['author']}: {post['text']}")
 
     # ---------------- DELETE OWN POST ----------------
     elif action in ("del", "delete"):

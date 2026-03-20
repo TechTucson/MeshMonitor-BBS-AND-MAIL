@@ -50,10 +50,10 @@ All commands are sent as a DM message starting with `bbs`.
 ### Posting
 
 - `bbs post <board> <message>`  
-  Post on a public board.
+  Post on a public board. Use `subject | message` format.
 
 - `bbs post <board> <password> <message>`  
-  Post on a protected board.
+  Post on a protected board. Use `subject | message` format.
 
 ### Reading
 
@@ -93,11 +93,11 @@ All commands are sent as a DM message starting with `bbs`.
 
 ```text
 bbs create general
-bbs post general hello mesh
+bbs post general hello | mesh test message
 bbs read general
 
 bbs create ops s3cret
-bbs post ops s3cret scheduled maintenance at 0300z
+bbs post ops s3cret maint | scheduled maintenance at 0300z
 bbs read ops s3cret
 
 bbs del 12
