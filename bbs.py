@@ -6,6 +6,7 @@
 import json
 import os
 import pathlib
+import sys
 
 DATA = "/data/bbs"
 pathlib.Path(DATA).mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,22 @@ def split_subject_and_body(raw_text):
     return "(no subject)", raw_text.strip()
 
 
+def normalize_node_id(node_id):
+    value = (node_id or "").strip()
+    if not value:
+        return value
+    return value if value.startswith("!") else f"!{value}"
+
+
+def get_sender_node_id():
+    argv = sys.argv[1:]
+    if "--nid" in argv:
+        idx = argv.index("--nid")
+        if idx + 1 < len(argv):
+            return normalize_node_id(argv[idx + 1])
+    return normalize_node_id(os.getenv("FROM_NODE", "unknown"))
+
+
 # -----------------------------
 # Paging Functions
 # -----------------------------
@@ -93,11 +110,11 @@ def dm_chunked(sender, text):
     first_limit = MAX_LEN - len(MORE_PROMPT)
     chunks = chunk_text(text, first_limit)
 
-    pending[sender] = chunks[1:]
+    pending[pending_key] = chunks[1:]
     save(PENDING_DB, pending)
 
     first = chunks[0]
-    if pending[sender]:
+    if pending[pending_key]:
         first += MORE_PROMPT
 
     send_private(first)
@@ -125,7 +142,8 @@ def help_text():
 # Environment
 # -----------------------------
 
-sender = os.getenv("FROM_NODE", "unknown")
+sender = get_sender_node_id()
+pending_key = f"bbs:{sender}"
 message = os.getenv("MESSAGE", "").strip()
 
 parts = message.split()
@@ -141,8 +159,8 @@ pending = load(PENDING_DB)
 
 # Clear stale pagination state unless user asked for more.
 if not (cmd == "bbs" and len(parts) > 1 and parts[1].lower() == "more"):
-    if sender in pending and pending[sender]:
-        pending[sender] = []
+    if pending_key in pending and pending[pending_key]:
+        pending[pending_key] = []
         save(PENDING_DB, pending)
 
 
@@ -153,20 +171,20 @@ if not (cmd == "bbs" and len(parts) > 1 and parts[1].lower() == "more"):
 if cmd == "bbs":
     # ---------------- MORE (pagination) ----------------
     if len(parts) > 1 and parts[1].lower() == "more":
-        if sender not in pending or not pending[sender]:
+        if pending_key not in pending or not pending[pending_key]:
             dm_chunked(sender, header("Info") + "No more messages.")
 
         next_limit = MAX_LEN - len(MORE_PROMPT)
-        next_page = pending[sender].pop(0)
+        next_page = pending[pending_key].pop(0)
         save(PENDING_DB, pending)
 
         if len(next_page) > next_limit:
             rest = chunk_text(next_page, next_limit)
             next_page = rest[0]
-            pending[sender] = rest[1:] + pending[sender]
+            pending[pending_key] = rest[1:] + pending[pending_key]
             save(PENDING_DB, pending)
 
-        if pending[sender]:
+        if pending[pending_key]:
             next_page += MORE_PROMPT
 
         send_private(next_page)

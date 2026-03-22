@@ -89,11 +89,11 @@ def dm_chunked(sender, text):
     first_limit = MAX_LEN - len(MORE_PROMPT)
     chunks = chunk_text(text, first_limit)
 
-    pending[sender] = chunks[1:]
+    pending[pending_key] = chunks[1:]
     save(PENDING_DB, pending)
 
     first = chunks[0]
-    if pending[sender]:
+    if pending[pending_key]:
         first += MORE_PROMPT
 
     send_private(first)
@@ -112,6 +112,7 @@ def help_text():
 
 
 sender = get_sender_node_id()
+pending_key = f"mail:{sender}"
 message = os.getenv("MESSAGE", "").strip()
 parts = message.split()
 
@@ -125,8 +126,8 @@ cmd = parts[0].lower()
 
 # Clear stale pagination state unless user asked for more.
 if not (cmd == "mail" and len(parts) > 1 and parts[1].lower() == "more"):
-    if sender in pending and pending[sender]:
-        pending[sender] = []
+    if pending_key in pending and pending[pending_key]:
+        pending[pending_key] = []
         save(PENDING_DB, pending)
 
 if cmd != "mail":
@@ -141,20 +142,20 @@ if action == "help":
     dm_chunked(sender, help_text())
 
 elif action == "more":
-    if sender not in pending or not pending[sender]:
+    if pending_key not in pending or not pending[pending_key]:
         dm_chunked(sender, header("Info") + "No more messages.")
 
     next_limit = MAX_LEN - len(MORE_PROMPT)
-    next_page = pending[sender].pop(0)
+    next_page = pending[pending_key].pop(0)
     save(PENDING_DB, pending)
 
     if len(next_page) > next_limit:
         rest = chunk_text(next_page, next_limit)
         next_page = rest[0]
-        pending[sender] = rest[1:] + pending[sender]
+        pending[pending_key] = rest[1:] + pending[pending_key]
         save(PENDING_DB, pending)
 
-    if pending[sender]:
+    if pending[pending_key]:
         next_page += MORE_PROMPT
 
     send_private(next_page)
